@@ -51,7 +51,7 @@ class CrossrefSettings extends \PKP\doi\RegistrationAgencySettings
                 ],
                 'testMode' => (object) [
                     'type' => 'boolean',
-                ]
+                ],
             ],
         ];
     }

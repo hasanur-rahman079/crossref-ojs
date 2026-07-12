@@ -276,10 +276,16 @@ class ArticleCrossrefXmlFilter extends IssueCrossrefXmlFilter
             $journalArticleNode->appendChild($licenseNode);
         }
 
-        // DOI data
+        // DOI data — landing page URL (per-DOI override → journal template → OJS default)
         $dispatcher = $this->_getDispatcher($request);
-        $url = $dispatcher->url($request, PKPApplication::ROUTE_PAGE, $context->getPath(), 'article', 'view', [$publication->getData('urlPath') ?? $submission->getId()], null, null, true, '');
-        $doiDataNode = $this->createDOIDataNode($doc, $publication->getDoi(), $url);
+        $defaultLandingUrl = $dispatcher->url($request, PKPApplication::ROUTE_PAGE, $context->getPath(), 'article', 'view', [$publication->getData('urlPath') ?? $submission->getId()], null, null, true, '');
+        $publicationDoiId = $publication->getData('doiId') ? (int) $publication->getData('doiId') : null;
+        $landingUrl = $this->resolveUrl('landingPageUrl', $defaultLandingUrl, [
+            'id' => $submission->getId(),
+            'urlPath' => $publication->getData('urlPath'),
+            'doi' => $publication->getDoi(),
+        ], $publicationDoiId);
+        $doiDataNode = $this->createDOIDataNode($doc, $publication->getDoi(), $landingUrl);
         // append galleys files and collection nodes to the DOI data node
         $galleys = $publication->getData('galleys');
         // All full-texts, PDF full-texts and remote galleys for text-mining and as-crawled URL
@@ -360,7 +366,14 @@ class ArticleCrossrefXmlFilter extends IssueCrossrefXmlFilter
             $doiDataNode->appendChild($crawlerBasedCollectionNode);
         }
         foreach ($galleys as $galley) {
-            $resourceURL = $dispatcher->url($request, PKPApplication::ROUTE_PAGE, $context->getPath(), 'article', 'download', [$publication->getData('urlPath') ?? $submission->getId(), $galley->getBestGalleyId()], null, null, true, '');
+            $defaultDownloadUrl = $dispatcher->url($request, PKPApplication::ROUTE_PAGE, $context->getPath(), 'article', 'download', [$publication->getData('urlPath') ?? $submission->getId(), $galley->getBestGalleyId()], null, null, true, '');
+            $galleyDoiId = $galley->getData('doiId') ? (int) $galley->getData('doiId') : null;
+            $resourceURL = $this->resolveUrl('fullTextUrl', $defaultDownloadUrl, [
+                'id' => $submission->getId(),
+                'urlPath' => $publication->getData('urlPath'),
+                'doi' => $publication->getDoi(),
+                'galleyId' => $galley->getBestGalleyId(),
+            ], $galleyDoiId);
             // iParadigms crawler based collection element
             $crawlerBasedCollectionNode = $doc->createElementNS($deployment->getNamespace(), 'collection');
             $crawlerBasedCollectionNode->setAttribute('property', 'crawler-based');
@@ -408,7 +421,14 @@ class ArticleCrossrefXmlFilter extends IssueCrossrefXmlFilter
         $textMiningCollectionNode->setAttribute('property', 'text-mining');
         foreach ($galleys as $galley) {
             $fileType = $galley->getFileType();
-            $resourceURL = $dispatcher->url($request, PKPApplication::ROUTE_PAGE, $context->getPath(), 'article', 'download', [$publication->getData('urlPath') ?? $submission->getId(), $galley->getBestGalleyId()], null, null, true, ''); // text-mining collection item
+            $defaultDownloadUrl = $dispatcher->url($request, PKPApplication::ROUTE_PAGE, $context->getPath(), 'article', 'download', [$publication->getData('urlPath') ?? $submission->getId(), $galley->getBestGalleyId()], null, null, true, '');
+            $galleyDoiId = $galley->getData('doiId') ? (int) $galley->getData('doiId') : null;
+            $resourceURL = $this->resolveUrl('fullTextUrl', $defaultDownloadUrl, [
+                'id' => $submission->getId(),
+                'urlPath' => $publication->getData('urlPath'),
+                'doi' => $publication->getDoi(),
+                'galleyId' => $galley->getBestGalleyId(),
+            ], $galleyDoiId);
 
 
             // add only non-audio/video galleys to text-mining
@@ -425,6 +445,51 @@ class ArticleCrossrefXmlFilter extends IssueCrossrefXmlFilter
             }
         }
         $doiDataNode->appendChild($textMiningCollectionNode);
+    }
+
+    /**
+     * Resolve a URL with this priority:
+     *   1. Per-DOI override (direct URL stored on the DOI object, no template substitution)
+     *   2. Journal-wide plugin setting (URL template with {$variables})
+     *   3. OJS default dispatcher URL
+     *
+     * @param string $settingName   Plugin setting key / DOI data field (e.g. 'landingPageUrl', 'fullTextUrl')
+     * @param string $defaultUrl    The OJS-generated dispatcher URL to fall back on
+     * @param array  $variables     Key-value pairs for template replacement (only for journal template)
+     * @param ?int   $doiId         Optional DOI ID to check for per-DOI override
+     *
+     * @return string
+     */
+    protected function resolveUrl(string $settingName, string $defaultUrl, array $variables, ?int $doiId = null): string
+    {
+        $deployment = $this->getDeployment();
+        $context = $deployment->getContext();
+        $plugin = $deployment->getPlugin();
+
+        // 1. Per-DOI override — a direct URL, not a template
+        if ($doiId !== null) {
+            $doi = \APP\facades\Repo::doi()->get($doiId);
+            if ($doi) {
+                $perDoiUrl = $doi->getData($settingName);
+                if (!empty($perDoiUrl)) {
+                    return $perDoiUrl;
+                }
+            }
+        }
+
+        // 2. Journal-wide URL template from plugin settings
+        $template = $plugin->getSetting($context->getId(), $settingName);
+
+        if (empty($template)) {
+            return $defaultUrl;
+        }
+
+        $url = $template;
+        foreach ($variables as $key => $value) {
+            $url = str_replace('{$' . $key . '}', (string) ($value ?? ''), $url);
+        }
+
+        return $url;
     }
 
     /**
@@ -459,7 +524,14 @@ class ArticleCrossrefXmlFilter extends IssueCrossrefXmlFilter
                 $componentNode->appendChild($titlesNode);
             }
             // DOI data node
-            $resourceURL = $dispatcher->url($request, PKPApplication::ROUTE_PAGE, $context->getPath(), 'article', 'download', [$publication->getData('urlPath') ?? $submission->getId(), $componentGalley->getBestGalleyId()], null, null, true, '');
+            $defaultResourceUrl = $dispatcher->url($request, PKPApplication::ROUTE_PAGE, $context->getPath(), 'article', 'download', [$publication->getData('urlPath') ?? $submission->getId(), $componentGalley->getBestGalleyId()], null, null, true, '');
+            $componentDoiId = $componentGalley->getData('doiId') ? (int) $componentGalley->getData('doiId') : null;
+            $resourceURL = $this->resolveUrl('fullTextUrl', $defaultResourceUrl, [
+                'id' => $submission->getId(),
+                'urlPath' => $publication->getData('urlPath'),
+                'doi' => $publication->getDoi(),
+                'galleyId' => $componentGalley->getBestGalleyId(),
+            ], $componentDoiId);
             $componentNode->appendChild($this->createDOIDataNode($doc, $componentGalley->getStoredPubId('doi'), $resourceURL));
             $componentListNode->appendChild($componentNode);
         }

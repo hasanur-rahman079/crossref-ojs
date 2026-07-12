@@ -130,6 +130,18 @@ class CrossrefPlugin extends GenericPlugin implements IDoiRegistrationAgency
             ];
         }
 
+        // Per-DOI URL overrides for custom frontends (landing page and full-text/similarity check)
+        $schema->properties->{'landingPageUrl'} = (object) [
+            'type' => 'string',
+            'apiSummary' => true,
+            'validation' => ['nullable', 'max:512'],
+        ];
+        $schema->properties->{'fullTextUrl'} = (object) [
+            'type' => 'string',
+            'apiSummary' => true,
+            'validation' => ['nullable', 'max:512'],
+        ];
+
         return false;
     }
 
