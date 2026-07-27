@@ -204,7 +204,7 @@ class CrossrefPlugin extends GenericPlugin implements IDoiRegistrationAgency
         $errors = &$args[0];
         $props = $args[2];
 
-        if (!isset($props['enabledDoiTypes'])) {
+        if (!isset($props['enabledDoiTypes']) || !is_array($props['enabledDoiTypes'])) {
             return Hook::CONTINUE;
         }
 
